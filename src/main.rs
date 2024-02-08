@@ -13,13 +13,14 @@ use flume;
 use flate2::read::GzDecoder;
 use flate2::write::GzEncoder;
 use flate2::Compression;
-use serde_json::Value;
+use serde::{Deserialize, Serialize};
+// use serde_json::Result;
 use std::io::prelude::*;
 use regex;
 use tempdir::TempDir;
 use std::process;
 
-const WORD_SPLITS: &[char] = &[' ', '\t', '\n', '\r', ',', '.', ';', ':', '!', '?', '(', ')', '[', ']', '{', '}', '<', '>', '"', '\''];
+// const WORD_SPLITS: &[char] = &[' ', '\t', '\n', '\r', ',', '.', ';', ':', '!', '?', '(', ')', '[', ']', '{', '}', '<', '>', '"', '\''];
 const MIN_WORD_LENGTH: usize = 5;
 const BANNED: &str = "https://raw.githubusercontent.com/first20hours/google-10000-english/master/20k.txt";
 const MASK: &str = "<|MOLECULE|>";
@@ -51,6 +52,12 @@ struct Opt {
 
 }
 
+#[derive(Serialize, Deserialize, Debug)]
+struct Paragraph {
+    start: usize,
+    end: usize,
+}
+
 fn estimate_lines (file_path: &str) -> Result<usize, Box<dyn Error>> {
     let file = File::open(file_path)?;
     let reader = BufReader::new(file);
@@ -73,7 +80,6 @@ impl StemmerWrapper{
         self.stemmer.stem(word.trim().to_lowercase().as_str()).to_string()
     }
 }
-
 
 fn to_ascii_titlecase(s: &str) -> String {
     let mut titlecased = s.to_owned();
@@ -155,51 +161,23 @@ fn search_keys_in_text<'a>(map: &'a HashMap<String, u32>, text: &'a str) -> Sear
     let mut search_results = Vec::new();
     let re = regex::Regex::new(r"\n\n").unwrap();
     re.split(text).map(|paragraph| {
-        let mut count: usize = 0;
-        let mut last_word = String::new();
-        let mut last_count: usize = 0;
-        let mut last_key = String::new();
-        let mut seen = HashSet::new(); // we only want to observer a key once
-        paragraph.split(WORD_SPLITS).map(|word| {
-            count += word.len() + 1;
-            let title_word = to_ascii_titlecase(word);
-            let mut value: Option<&u32> = None;
-            last_key.clear();
-            last_key.push_str(&last_word);
-            last_key.push(' ');
-            last_key.push_str(word);
-            if word.len() >= MIN_WORD_LENGTH && map.contains_key(&last_key) && !seen.contains(&last_key) {
-                value = map.get(&last_key);
-            } else if last_word.len() >= MIN_WORD_LENGTH && map.contains_key(&last_word) && !seen.contains(&last_word) {
-                value = map.get(&last_word);
-                last_key.clear();
-                last_key.push_str(&last_word);
+        let mut seen:bool = false; // we only want to observer a key once
+        for (key, value) in map.iter() {
+            if seen {
+                continue; //Ignores all other keys if one key was found before
             }
-            
-            if value.is_some() {
-                // need to copy paragraph so I can mask out the word
-                let mut paragraph = paragraph.to_string().replace(&last_key, MASK);
-                paragraph = paragraph.replace(from_ascii_titlecase(&last_key).as_str(), MASK);
-                seen.insert(last_key.to_string());
-                search_results.push((paragraph, last_key.to_string(), *value.unwrap()));
-            }
-    
-            last_word = title_word.to_string();
-            last_count = count;
-        }).count();
-
-        // add the last word
-        if last_word.len() >= MIN_WORD_LENGTH && map.contains_key(&last_word) && !seen.contains(&last_word) {
-            let value = map.get(&last_word);
-            if value.is_some() {
-                // need to copy paragraph so I can mask out the word
-                let mut paragraph = paragraph.to_string().replace(&last_word, MASK);
-                paragraph = paragraph.replace(from_ascii_titlecase(&last_word).as_str(), MASK);
-                seen.insert(last_word.to_string());
-                search_results.push((paragraph.replace(&last_word, MASK), last_word.to_string(), *value.unwrap()));
+            match paragraph.contains(key) {
+                true => {
+                    let mut paragraph = paragraph.to_string().replace(key, MASK);
+                    paragraph = paragraph.replace(from_ascii_titlecase(key).as_str(), MASK);
+                    search_results.push((paragraph, key.to_string(), *value));
+                    seen = true;
+                },
+                false => {
+                    // println!("No match found.");
+                },
             }
         }
-
     }).count();
 
     search_results
@@ -216,6 +194,7 @@ fn generate_report(search_results: SearchResults, writer: &mut BufWriter<File>, 
 }
 
 async fn process_files(opt: Opt) -> Result<(), Box<dyn Error>> {
+    println!("opt: {:?}", opt);
     let banned = Arc::new(fetch_words_from_url(BANNED).await.unwrap());
     let map = Arc::new(parse_csv(&opt.csv_file, &banned)?);
     let (tx, rx) = flume::unbounded();
@@ -229,6 +208,8 @@ async fn process_files(opt: Opt) -> Result<(), Box<dyn Error>> {
         tokio::spawn(async move {
             let ext = Path::new(&fp).extension().unwrap();
             let mut text: String;
+            let mut text_upper_lim: usize;
+            let mut text_lower_lim: usize;
             let ofp = format!("{}_{}", output_file, &index.to_string());
             let output_path = Path::new(&ofp);
             let mut writer = BufWriter::new(File::create(output_path).unwrap());
@@ -254,7 +235,35 @@ async fn process_files(opt: Opt) -> Result<(), Box<dyn Error>> {
                             Ok(json_data) => {
                                 //print out json_data attributes
                                 match json_data["content"][&property].as_str() {
-                                    Some(t) => { text = t.to_string(); },
+                                    Some(t) => {
+                                        match json_data["content"]["annotations"]["paragraph"].as_str() {
+                                            Some(p) => {
+                                                let paragraphs: Result<Vec<Paragraph>, serde_json::Error> = serde_json::from_str(p);
+                                                match paragraphs {
+                                                    Ok(ps) => {
+                                                        text_upper_lim = ps.last().unwrap().end;
+                                                        text_lower_lim = ps.first().unwrap().start;
+                                                    },
+                                                    Err(e) => {
+                                                        // TODO: Sometimes, the indexes are saved as strings. How to handle this?
+                                                        println!("Error: {}", e);
+                                                        continue;
+                                                    }
+                                                }
+                                            },
+                                            None => {
+                                                println!("Error: No paragraphs found");
+                                                continue;
+                                            }
+                                        }
+
+                                        // text  = t[text_lower_lim..text_upper_lim].to_string();
+                                        text = if let Some(slice) = t.get(text_lower_lim..text_upper_lim) {
+                                            slice.to_string()
+                                        } else {
+                                            continue;
+                                        };
+                                    },
                                     None => { continue; }
                                 }
                                 let corpus_id  = match json_data["corpusid"].as_u64() {
