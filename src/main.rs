@@ -194,7 +194,6 @@ fn generate_report(search_results: SearchResults, writer: &mut BufWriter<File>, 
 }
 
 async fn process_files(opt: Opt) -> Result<(), Box<dyn Error>> {
-    println!("opt: {:?}", opt);
     let banned = Arc::new(fetch_words_from_url(BANNED).await.unwrap());
     let map = Arc::new(parse_csv(&opt.csv_file, &banned)?);
     let (tx, rx) = flume::unbounded();
