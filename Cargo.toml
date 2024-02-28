@@ -17,3 +17,4 @@ serde = { version = "1.0", features = ["derive"] }
 tempdir = "0.3"
 flate2 = "1.0.26"
 regex = "1.8.4"
+stringzilla = "3.3.1"

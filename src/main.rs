@@ -20,13 +20,14 @@ use std::io::prelude::*;
 use regex;
 use tempdir::TempDir;
 use std::process;
+use stringzilla::StringZilla;
 
-// const WORD_SPLITS: &[char] = &[' ', '\t', '\n', '\r', ',', '.', ';', ':', '!', '?', '(', ')', '[', ']', '{', '}', '<', '>', '"', '\''];
+const WORD_SPLITS: &[char] = &[' ', '\t', '\n', '\r', ',', '.', ';', ':', '!', '?', '(', ')', '[', ']', '{', '}', '<', '>', '"', '\''];
 const MIN_WORD_LENGTH: usize = 5;
 const BANNED: &str = "https://raw.githubusercontent.com/first20hours/google-10000-english/master/20k.txt";
 const MASK: &str = "<|MOLECULE|>";
 
-type SearchResults = Vec<(String, String, u32)>;
+type SearchResults = Vec<(String, String, String)>;
 
 #[derive(StructOpt, Debug)]
 #[structopt(name = "key-search")]
@@ -64,6 +65,7 @@ fn estimate_lines (file_path: &str) -> Result<usize, Box<dyn Error>> {
     let reader = BufReader::new(file);
     let line_count = reader.lines().count();
     Ok(line_count)
+
 }
 
 struct StemmerWrapper {
@@ -122,7 +124,7 @@ async fn fetch_words_from_url(url: &str) -> Result<HashSet<String>, Box<dyn Erro
 }
 
 // Read CSV file and returns a HashMap with key-value pairs
-fn parse_csv(file_path: &str, banned: &HashSet<String>) -> Result<HashMap<String, u32>, Box<dyn Error>> {
+fn parse_csv(file_path: &str, banned: &HashSet<String>) -> Result<HashMap<String, String>, Box<dyn Error>> {
     let estimate = estimate_lines(file_path)?;
     let mut map = HashMap::with_capacity(estimate);
     let stemmer = StemmerWrapper::new();
@@ -139,11 +141,11 @@ fn parse_csv(file_path: &str, banned: &HashSet<String>) -> Result<HashMap<String
 
     for line in content.lines() {
         let split: Vec<&str> = line.split('\t').collect();
-        if split.len() == 2 {
-            let value = split[0].trim().to_string();
-            let key = split[1].trim().to_string();
+        if split.len() == 3 { // CID SMILES NAME
+            let value = split[1].trim().to_string();
+            let key = split[2].trim().to_string();
             if key.len() >= MIN_WORD_LENGTH && !banned.contains(stemmer.standardize(&key).as_str()) {
-                map.insert(to_ascii_titlecase(&key), value.parse::<u32>().unwrap());
+                map.insert(to_ascii_titlecase(&key), value); //.parse::<u32>().unwrap());
             } else {
                 skipped += 1;
             }
@@ -158,26 +160,41 @@ fn parse_csv(file_path: &str, banned: &HashSet<String>) -> Result<HashMap<String
 }
 
 
-fn search_keys_in_text<'a>(map: &'a HashMap<String, u32>, text: &'a str) -> SearchResults {
-    let mut search_results = Vec::new();
+fn search_keys_in_text<'a>(map: &'a HashMap<String, String>, text: &'a str) -> SearchResults {
+    let mut search_results: SearchResults = Vec::new();
     let re = regex::Regex::new(r"\n\n").unwrap();
     re.split(text).map(|paragraph| {
         let mut seen:bool = false; // we only want to observer a key once
-        for (key, value) in map.iter() {
-            if seen {
-                continue; //Ignores all other keys if one key was found before
+        for (key, value) in map {
+            // if seen {
+            //     continue; //Ignores all other keys if one key was found before
+            // }
+
+            if paragraph.to_lowercase().sz_find(key.to_lowercase()).is_none() {
+                continue;
             }
-            match paragraph.contains(key) {
-                true => {
-                    let mut paragraph = paragraph.to_string().replace(key, MASK);
-                    paragraph = paragraph.replace(from_ascii_titlecase(key).as_str(), MASK);
-                    search_results.push((paragraph, key.to_string(), *value));
-                    seen = true;
-                },
-                false => {
-                    // println!("No match found.");
-                },
+            else {
+                println!("Found key: {}", key);
+                // let mut paragraph = paragraph.to_string().replace(key, MASK);
+                // paragraph = paragraph.replace(from_ascii_titlecase(key).as_str(), MASK);
+                // search_results.push((paragraph, key.to_string(), value.to_string()));
+                // seen = true;
             }
+            // match paragraph.to_lowercase().contains(&key.to_lowercase()) {
+            //     true => {
+            //         // println!("Match found");
+            //         // println!("Key: {}. Value: {}", key, value);
+            //         let mut paragraph = paragraph.to_string().replace(key, MASK);
+            //         paragraph = paragraph.replace(from_ascii_titlecase(key).as_str(), MASK);
+            //         search_results.push((paragraph, key.to_string(), value.to_string()));
+            //         seen = true;
+            //     },
+            //     false => {
+            //         // println!("No match found.");
+            //         // println!("Key: {}. Value: {}", key, value);
+            //         // println!("Paragraph: {}", paragraph);
+            //     },
+            // }
         }
     }).count();
 
@@ -202,7 +219,7 @@ async fn process_files(opt: Opt) -> Result<(), Box<dyn Error>> {
     for (index, file_path) in opt.files.iter().enumerate() {
         let property = opt.property.clone();
         let fp = file_path.to_str().unwrap().to_string();
-        let map: Arc<HashMap<String, u32>> = Arc::clone(&map);
+        let map: Arc<HashMap<String, String>> = Arc::clone(&map);
         let tx = tx.clone();
         let output_file = opt.output_file.clone();
         tokio::spawn(async move {
@@ -226,6 +243,9 @@ async fn process_files(opt: Opt) -> Result<(), Box<dyn Error>> {
                     for line in gz.lines() {
                         if opt.stop > 0 && count == opt.stop {
                             break;
+                        }
+                        if count % 1000 == 0 {
+                            println!("Processing file {}", count);
                         }
                         // skip empty lines
                         if line.as_ref().unwrap().is_empty() {
