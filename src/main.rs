@@ -30,7 +30,7 @@ const MIN_WORD_LENGTH: usize = 5;
 const BANNED: &str = "https://raw.githubusercontent.com/dwyl/english-words/master/words.txt";
 const MASK: &str = "<|MOLECULE|>";
 
-type SearchResults = Vec<(String, String, u32)>;
+type SearchResults = Vec<(String, String, String)>;
 
 #[derive(StructOpt, Debug)]
 #[structopt(name = "key-search")]
@@ -163,7 +163,7 @@ async fn fetch_words_from_url(url: &str) -> Result<HashSet<String>, Box<dyn Erro
 }
 
 // Read CSV file and returns a HashMap with key-value pairs
-fn parse_csv(file_path: &str, banned: &HashSet<String>) -> Result<HashMap<String, u32>, Box<dyn Error>> {
+fn parse_csv(file_path: &str, banned: &HashSet<String>) -> Result<HashMap<String, String>, Box<dyn Error>> {
     let estimate = estimate_lines(file_path)?;
     let mut map = HashMap::with_capacity(estimate);
     let stemmer = StemmerWrapper::new();
@@ -180,11 +180,11 @@ fn parse_csv(file_path: &str, banned: &HashSet<String>) -> Result<HashMap<String
 
     for line in content.lines() {
         let split: Vec<&str> = line.split('\t').collect();
-        if split.len() == 2 { // CID SMILES NAME
-            let value = split[0].trim().to_string();
-            let key = split[1].trim().to_string();
+        if split.len() == 3 { // CID SMILES NAME
+            let value = split[1].trim().to_string();
+            let key = split[2].trim().to_string();
             if key.len() >= MIN_WORD_LENGTH && !banned.contains(stemmer.standardize(&key).as_str()) {
-                map.insert(to_ascii_titlecase(&key), value.parse::<u32>().unwrap());
+                map.insert(to_ascii_titlecase(&key), value); //.parse::<u32>().unwrap());
             } else {
                 skipped += 1;
             }
@@ -198,7 +198,7 @@ fn parse_csv(file_path: &str, banned: &HashSet<String>) -> Result<HashMap<String
     Ok(map)
 }
 
-fn search_keys_in_text<'a>(map: &'a HashMap<String, u32>, text: &'a str) -> SearchResults {
+fn search_keys_in_text<'a>(map: &'a HashMap<String, String>, text: &'a str) -> SearchResults {
     let mut search_results = Vec::new();
     let re = regex::Regex::new(r"\n\n").unwrap();
     re.split(text).map(|paragraph| {
@@ -210,7 +210,7 @@ fn search_keys_in_text<'a>(map: &'a HashMap<String, u32>, text: &'a str) -> Sear
         paragraph.split(WORD_SPLITS).map(|word| {
             count += word.len() + 1;
             let title_word = to_ascii_titlecase(word);
-            let mut value: Option<&u32> = None;
+            let mut value: Option<&String> = None;
             last_key.clear();
             last_key.push_str(&last_word);
             last_key.push(' ');
@@ -228,7 +228,7 @@ fn search_keys_in_text<'a>(map: &'a HashMap<String, u32>, text: &'a str) -> Sear
                 let mut paragraph = paragraph.to_string().replace(&last_key, MASK);
                 paragraph = paragraph.replace(from_ascii_titlecase(&last_key).as_str(), MASK);
                 seen.insert(last_key.to_string());
-                search_results.push((paragraph, last_key.to_string(), *value.unwrap()));
+                search_results.push((paragraph, last_key.to_string(), value.unwrap().to_string()));
             }
     
             last_word = title_word.to_string();
@@ -243,7 +243,7 @@ fn search_keys_in_text<'a>(map: &'a HashMap<String, u32>, text: &'a str) -> Sear
                 let mut paragraph = paragraph.to_string().replace(&last_word, MASK);
                 paragraph = paragraph.replace(from_ascii_titlecase(&last_word).as_str(), MASK);
                 seen.insert(last_word.to_string());
-                search_results.push((paragraph.replace(&last_word, MASK), last_word.to_string(), *value.unwrap()));
+                search_results.push((paragraph.replace(&last_word, MASK), last_word.to_string(), value.unwrap().to_string()));
             }
         }
 
@@ -253,7 +253,7 @@ fn search_keys_in_text<'a>(map: &'a HashMap<String, u32>, text: &'a str) -> Sear
 }
 
 // Slow performance search_keys_in_text algorithm. It doesn't use WORD_SPLIt, so I might want to optimize this later
-// fn search_keys_in_text<'a>(map: &'a HashMap<String, u32>, text: &'a str) -> SearchResults {
+// fn search_keys_in_text<'a>(map: &'a HashMap<String, String>, text: &'a str) -> SearchResults {
 //     let mut search_results: SearchResults = Vec::new();
 //     let re = regex::Regex::new(r"\n\n").unwrap();
 //     re.split(text).map(|paragraph| {
@@ -311,7 +311,7 @@ async fn process_files(opt: Opt) -> Result<(), Box<dyn Error>> {
     for (index, file_path) in opt.files.iter().enumerate() {
         let property = opt.property.clone();
         let fp = file_path.to_str().unwrap().to_string();
-        let map: Arc<HashMap<String, u32>> = Arc::clone(&map);
+        let map: Arc<HashMap<String, String>> = Arc::clone(&map);
         let tx = tx.clone();
         let output_file = opt.output_file.clone();
         tokio::spawn(async move {
