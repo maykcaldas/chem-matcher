@@ -262,7 +262,7 @@ fn search_keys_in_text<'a>(map: &'a HashMap<String, String>, text: &'a str) -> S
 //             if seen {
 //                 continue; //Ignores all other keys if one key was found before
 //             }
-
+//
 //             if paragraph.to_lowercase().sz_find(key.to_lowercase()).is_none() {
 //                 continue;
 //             }
@@ -336,9 +336,9 @@ async fn process_files(opt: Opt) -> Result<(), Box<dyn Error>> {
                         if opt.stop > 0 && count == opt.stop {
                             break;
                         }
-                        if count % 100 == 0 {
-                            println!("Processing file {}", count);
-                        }
+                        // if count % 1000 == 0 {
+                        //     println!("Processing file {}", count);
+                        // }
                         // skip empty lines
                         if line.as_ref().unwrap().is_empty() {
                             continue;
