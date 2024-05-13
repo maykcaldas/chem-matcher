@@ -26,8 +26,8 @@ use stringzilla::StringZilla;
 
 const WORD_SPLITS: &[char] = &[' ', '\t', '\n', '\r', ',', '.', ';', ':', '!', '?', '(', ')', '[', ']', '{', '}', '<', '>', '"', '\''];
 const MIN_WORD_LENGTH: usize = 5;
-// const BANNED: &str = "https://raw.githubusercontent.com/first20hours/google-10000-english/master/20k.txt";
-const BANNED: &str = "https://raw.githubusercontent.com/dwyl/english-words/master/words.txt";
+const BANNED: &str = "https://raw.githubusercontent.com/first20hours/google-10000-english/master/20k.txt";
+// const BANNED: &str = "https://raw.githubusercontent.com/dwyl/english-words/master/words.txt";
 const MASK: &str = "<|MOLECULE|>";
 
 type SearchResults = Vec<(String, String, String)>;

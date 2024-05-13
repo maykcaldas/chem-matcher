@@ -24,10 +24,10 @@ else:
     raise Exception(f"Failed to get dataset info: Status code {response.status_code}")
 
 for i, url in enumerate(response_data['files'], start=1):
-    if i > 10: break # don't want to download all 260GB
+    if i > 1: break # don't want to download all 260GB
     filename = url.split('/')[-1].split('?')[0]  
     response = requests.get(url, stream=True)  
-
+    print(filename)
     if response.status_code == 200:
         print(f"Downloading chunk{i}: {filename}")
         with open(f"chunk{i}.gz", 'wb') as file:
