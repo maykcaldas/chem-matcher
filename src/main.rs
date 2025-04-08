@@ -14,17 +14,23 @@ use flate2::read::GzDecoder;
 use flate2::write::GzEncoder;
 use flate2::Compression;
 use serde_json::Value;
+use serde::{Deserialize, Deserializer, Serialize, Serializer};
+use serde::de::{self, Visitor};
+use std::fmt;
+// use serde_json::Result;
 use std::io::prelude::*;
 use regex;
 use tempdir::TempDir;
 use std::process;
+use stringzilla::StringZilla;
 
 const WORD_SPLITS: &[char] = &[' ', '\t', '\n', '\r', ',', '.', ';', ':', '!', '?', '(', ')', '[', ']', '{', '}', '<', '>', '"', '\''];
 const MIN_WORD_LENGTH: usize = 5;
 const BANNED: &str = "https://raw.githubusercontent.com/first20hours/google-10000-english/master/20k.txt";
+// const BANNED: &str = "https://raw.githubusercontent.com/dwyl/english-words/master/words.txt";
 const MASK: &str = "<|MOLECULE|>";
 
-type SearchResults = Vec<(String, String, u32)>;
+type SearchResults = Vec<(String, String, String)>;
 
 #[derive(StructOpt, Debug)]
 #[structopt(name = "key-search")]
@@ -51,11 +57,54 @@ struct Opt {
 
 }
 
+// Custom deserialization function
+fn deserialize_usize_or_string<'de, D>(deserializer: D) -> Result<usize, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    struct UsizeOrString;
+
+    impl<'de> Visitor<'de> for UsizeOrString {
+        type Value = usize;
+
+        fn expecting(&self, formatter: &mut fmt::Formatter) -> fmt::Result {
+            formatter.write_str("an integer or a string that can be parsed as an integer")
+        }
+
+        // For directly encountering an integer
+        fn visit_u64<E>(self, value: u64) -> Result<usize, E>
+        where
+            E: de::Error,
+        {
+            Ok(value as usize)
+        }
+
+        // For encountering a string that needs to be parsed
+        fn visit_str<E>(self, value: &str) -> Result<usize, E>
+        where
+            E: de::Error,
+        {
+            value.parse::<usize>().map_err(de::Error::custom)
+        }
+    }
+
+    deserializer.deserialize_any(UsizeOrString)
+}
+
+#[derive(Serialize, Deserialize, Debug)]
+struct Paragraph {
+    #[serde(deserialize_with = "deserialize_usize_or_string")]
+    start: usize,
+    #[serde(deserialize_with = "deserialize_usize_or_string")]
+    end: usize,
+}
+
 fn estimate_lines (file_path: &str) -> Result<usize, Box<dyn Error>> {
     let file = File::open(file_path)?;
     let reader = BufReader::new(file);
     let line_count = reader.lines().count();
     Ok(line_count)
+
 }
 
 struct StemmerWrapper {
@@ -73,7 +122,6 @@ impl StemmerWrapper{
         self.stemmer.stem(word.trim().to_lowercase().as_str()).to_string()
     }
 }
-
 
 fn to_ascii_titlecase(s: &str) -> String {
     let mut titlecased = s.to_owned();
@@ -93,7 +141,7 @@ fn from_ascii_titlecase(s: &str) -> String {
 
 async fn fetch_words_from_url(url: &str) -> Result<HashSet<String>, Box<dyn Error>> {
     let response = reqwest::get(url).await?;
-    let pb = ProgressBar::new(20000 as u64);
+    let pb = ProgressBar::new(466000 as u64);
     pb.set_style(
         ProgressStyle::default_bar()
             .template("fetching common words [{elapsed_precise}] {bar} {pos}/{len} ({eta})")?
@@ -115,7 +163,7 @@ async fn fetch_words_from_url(url: &str) -> Result<HashSet<String>, Box<dyn Erro
 }
 
 // Read CSV file and returns a HashMap with key-value pairs
-fn parse_csv(file_path: &str, banned: &HashSet<String>) -> Result<HashMap<String, u32>, Box<dyn Error>> {
+fn parse_csv(file_path: &str, banned: &HashSet<String>) -> Result<HashMap<String, String>, Box<dyn Error>> {
     let estimate = estimate_lines(file_path)?;
     let mut map = HashMap::with_capacity(estimate);
     let stemmer = StemmerWrapper::new();
@@ -132,11 +180,11 @@ fn parse_csv(file_path: &str, banned: &HashSet<String>) -> Result<HashMap<String
 
     for line in content.lines() {
         let split: Vec<&str> = line.split('\t').collect();
-        if split.len() == 2 {
-            let value = split[0].trim().to_string();
-            let key = split[1].trim().to_string();
+        if split.len() == 3 { // CID SMILES NAME
+            let value = split[1].trim().to_string();
+            let key = split[2].trim().to_string();
             if key.len() >= MIN_WORD_LENGTH && !banned.contains(stemmer.standardize(&key).as_str()) {
-                map.insert(to_ascii_titlecase(&key), value.parse::<u32>().unwrap());
+                map.insert(to_ascii_titlecase(&key), value);
             } else {
                 skipped += 1;
             }
@@ -150,8 +198,7 @@ fn parse_csv(file_path: &str, banned: &HashSet<String>) -> Result<HashMap<String
     Ok(map)
 }
 
-
-fn search_keys_in_text<'a>(map: &'a HashMap<String, u32>, text: &'a str) -> SearchResults {
+fn search_keys_in_text<'a>(map: &'a HashMap<String, String>, text: &'a str) -> SearchResults {
     let mut search_results = Vec::new();
     let re = regex::Regex::new(r"\n\n").unwrap();
     re.split(text).map(|paragraph| {
@@ -163,7 +210,7 @@ fn search_keys_in_text<'a>(map: &'a HashMap<String, u32>, text: &'a str) -> Sear
         paragraph.split(WORD_SPLITS).map(|word| {
             count += word.len() + 1;
             let title_word = to_ascii_titlecase(word);
-            let mut value: Option<&u32> = None;
+            let mut value: Option<&String> = None;
             last_key.clear();
             last_key.push_str(&last_word);
             last_key.push(' ');
@@ -181,7 +228,7 @@ fn search_keys_in_text<'a>(map: &'a HashMap<String, u32>, text: &'a str) -> Sear
                 let mut paragraph = paragraph.to_string().replace(&last_key, MASK);
                 paragraph = paragraph.replace(from_ascii_titlecase(&last_key).as_str(), MASK);
                 seen.insert(last_key.to_string());
-                search_results.push((paragraph, last_key.to_string(), *value.unwrap()));
+                search_results.push((paragraph, last_key.to_string(), value.unwrap().to_string()));
             }
     
             last_word = title_word.to_string();
@@ -196,7 +243,7 @@ fn search_keys_in_text<'a>(map: &'a HashMap<String, u32>, text: &'a str) -> Sear
                 let mut paragraph = paragraph.to_string().replace(&last_word, MASK);
                 paragraph = paragraph.replace(from_ascii_titlecase(&last_word).as_str(), MASK);
                 seen.insert(last_word.to_string());
-                search_results.push((paragraph.replace(&last_word, MASK), last_word.to_string(), *value.unwrap()));
+                search_results.push((paragraph.replace(&last_word, MASK), last_word.to_string(), value.unwrap().to_string()));
             }
         }
 
@@ -204,7 +251,6 @@ fn search_keys_in_text<'a>(map: &'a HashMap<String, u32>, text: &'a str) -> Sear
 
     search_results
 }
-
 
 // Generate the report in a readable format
 fn generate_report(search_results: SearchResults, writer: &mut BufWriter<File>, paper_id: &str) {
@@ -223,12 +269,14 @@ async fn process_files(opt: Opt) -> Result<(), Box<dyn Error>> {
     for (index, file_path) in opt.files.iter().enumerate() {
         let property = opt.property.clone();
         let fp = file_path.to_str().unwrap().to_string();
-        let map: Arc<HashMap<String, u32>> = Arc::clone(&map);
+        let map: Arc<HashMap<String, String>> = Arc::clone(&map);
         let tx = tx.clone();
         let output_file = opt.output_file.clone();
         tokio::spawn(async move {
             let ext = Path::new(&fp).extension().unwrap();
             let mut text: String;
+            let mut text_upper_lim: usize;
+            let mut text_lower_lim: usize;
             let ofp = format!("{}_{}", output_file, &index.to_string());
             let output_path = Path::new(&ofp);
             let mut writer = BufWriter::new(File::create(output_path).unwrap());
@@ -254,7 +302,33 @@ async fn process_files(opt: Opt) -> Result<(), Box<dyn Error>> {
                             Ok(json_data) => {
                                 //print out json_data attributes
                                 match json_data["content"][&property].as_str() {
-                                    Some(t) => { text = t.to_string(); },
+                                    Some(t) => {
+                                        match json_data["content"]["annotations"]["paragraph"].as_str() {
+                                            Some(p) => {
+                                                let paragraphs: Result<Vec<Paragraph>, serde_json::Error> = serde_json::from_str(p);
+                                                match paragraphs {
+                                                    Ok(ps) => {
+                                                        text_upper_lim = ps.last().unwrap().end;
+                                                        text_lower_lim = ps.first().unwrap().start;
+                                                    },
+                                                    Err(e) => {
+                                                        // TODO: Sometimes, the indexes are saved as strings. How to handle this?
+                                                        println!("Error: {}", e);
+                                                        break;
+                                                    }
+                                                }
+                                            },
+                                            None => {
+                                                continue;
+                                            }
+                                        }
+
+                                        text = if let Some(slice) = t.get(text_lower_lim..text_upper_lim) {
+                                            slice.to_string()
+                                        } else {
+                                            continue;
+                                        };
+                                    },
                                     None => { continue; }
                                 }
                                 let corpus_id  = match json_data["corpusid"].as_u64() {
@@ -263,7 +337,6 @@ async fn process_files(opt: Opt) -> Result<(), Box<dyn Error>> {
                                         println!("{}", json_data.to_string());
                                         println!("Error: corpusid not found"); 
                                         process::exit(1);
-                                        //continue; 
                                     }
                                 };
                                 let search_result = search_keys_in_text(&*map, &text);
@@ -303,6 +376,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
     Ok(())
 }
 
+//TODO: Update tests
 #[cfg(test)]
 mod tests {
     use super::*;

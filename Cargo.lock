@@ -81,7 +81,7 @@ checksum = "baf1de4339761588bc0619e3cbc0120ee582ebb74b53b4efbf79117bd2da40fd"
 
 [[package]]
 name = "chem-matcher"
-version = "0.0.0"
+version = "0.0.1"
 dependencies = [
  "flate2",
  "flume",
@@ -89,7 +89,9 @@ dependencies = [
  "regex",
  "reqwest",
  "rust-stemmers",
+ "serde",
  "serde_json",
+ "stringzilla",
  "structopt",
  "tempdir",
  "tokio",
@@ -972,6 +974,9 @@ name = "serde"
 version = "1.0.164"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "9e8c8cf938e98f769bc164923b06dce91cea1751522f46f8466461af04c9027d"
+dependencies = [
+ "serde_derive",
+]
 
 [[package]]
 name = "serde_derive"
@@ -1048,6 +1053,15 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "6980e8d7511241f8acf4aebddbb1ff938df5eebe98691418c4468d0b72a96a67"
 dependencies = [
  "lock_api",
+]
+
+[[package]]
+name = "stringzilla"
+version = "3.3.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "f96114fe0ec9e52c180b2b1a531066b90cebc7c56a5bb99aa23a11ae37f7334f"
+dependencies = [
+ "cc",
 ]
 
 [[package]]
