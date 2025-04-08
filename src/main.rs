@@ -184,7 +184,7 @@ fn parse_csv(file_path: &str, banned: &HashSet<String>) -> Result<HashMap<String
             let value = split[1].trim().to_string();
             let key = split[2].trim().to_string();
             if key.len() >= MIN_WORD_LENGTH && !banned.contains(stemmer.standardize(&key).as_str()) {
-                map.insert(to_ascii_titlecase(&key), value); //.parse::<u32>().unwrap());
+                map.insert(to_ascii_titlecase(&key), value);
             } else {
                 skipped += 1;
             }
@@ -252,48 +252,6 @@ fn search_keys_in_text<'a>(map: &'a HashMap<String, String>, text: &'a str) -> S
     search_results
 }
 
-// Slow performance search_keys_in_text algorithm. It doesn't use WORD_SPLIt, so I might want to optimize this later
-// fn search_keys_in_text<'a>(map: &'a HashMap<String, String>, text: &'a str) -> SearchResults {
-//     let mut search_results: SearchResults = Vec::new();
-//     let re = regex::Regex::new(r"\n\n").unwrap();
-//     re.split(text).map(|paragraph| {
-//         let mut seen:bool = false; // we only want to observer a key once
-//         for (key, value) in map {
-//             if seen {
-//                 continue; //Ignores all other keys if one key was found before
-//             }
-//
-//             if paragraph.to_lowercase().sz_find(key.to_lowercase()).is_none() {
-//                 continue;
-//             }
-//             else {
-//                 // println!("Found key: {}", key);
-//                 let mut paragraph = paragraph.to_string().replace(key, MASK);
-//                 paragraph = paragraph.replace(from_ascii_titlecase(key).as_str(), MASK);
-//                 search_results.push((paragraph, key.to_string(), value.to_string()));
-//                 seen = true;
-//             }
-//             // match paragraph.to_lowercase().contains(&key.to_lowercase()) {
-//             //     true => {
-//             //         // println!("Match found");
-//             //         // println!("Key: {}. Value: {}", key, value);
-//             //         let mut paragraph = paragraph.to_string().replace(key, MASK);
-//             //         paragraph = paragraph.replace(from_ascii_titlecase(key).as_str(), MASK);
-//             //         search_results.push((paragraph, key.to_string(), value.to_string()));
-//             //         seen = true;
-//             //     },
-//             //     false => {
-//             //         // println!("No match found.");
-//             //         // println!("Key: {}. Value: {}", key, value);
-//             //         // println!("Paragraph: {}", paragraph);
-//             //     },
-//             // }
-//         }
-//     }).count();
-
-//     search_results
-// }
-
 // Generate the report in a readable format
 fn generate_report(search_results: SearchResults, writer: &mut BufWriter<File>, paper_id: &str) {
     for (context, word, cid) in search_results {
@@ -336,9 +294,6 @@ async fn process_files(opt: Opt) -> Result<(), Box<dyn Error>> {
                         if opt.stop > 0 && count == opt.stop {
                             break;
                         }
-                        // if count % 1000 == 0 {
-                        //     println!("Processing file {}", count);
-                        // }
                         // skip empty lines
                         if line.as_ref().unwrap().is_empty() {
                             continue;
@@ -364,12 +319,10 @@ async fn process_files(opt: Opt) -> Result<(), Box<dyn Error>> {
                                                 }
                                             },
                                             None => {
-                                                // println!("Error: No paragraphs annotation found");
                                                 continue;
                                             }
                                         }
 
-                                        // text  = t[text_lower_lim..text_upper_lim].to_string();
                                         text = if let Some(slice) = t.get(text_lower_lim..text_upper_lim) {
                                             slice.to_string()
                                         } else {
@@ -384,7 +337,6 @@ async fn process_files(opt: Opt) -> Result<(), Box<dyn Error>> {
                                         println!("{}", json_data.to_string());
                                         println!("Error: corpusid not found"); 
                                         process::exit(1);
-                                        //continue; 
                                     }
                                 };
                                 let search_result = search_keys_in_text(&*map, &text);
@@ -424,6 +376,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
     Ok(())
 }
 
+//TODO: Update tests
 #[cfg(test)]
 mod tests {
     use super::*;

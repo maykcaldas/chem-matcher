@@ -18,8 +18,8 @@ response = requests.get(f"{base_url}/dataset/s2orc", headers=headers)
 
 if response.status_code == 200:
    response_data = response.json()
-   print(response_data.keys())
-   print(len(response_data['files']))
+   print(f"Dataset info: {response_data.keys()}")
+   print(f"Number of files: {len(response_data['files'])}")
 else:
     raise Exception(f"Failed to get dataset info: Status code {response.status_code}")
 
